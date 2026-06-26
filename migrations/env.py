@@ -9,15 +9,17 @@ registers the ``user`` table on that metadata.
 import asyncio
 from logging.config import fileConfig
 
+from alembic import context
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy.pool import NullPool
 
-from alembic import context
+import src.lesson_plans.models  # noqa: F401  (side effect: register tables)
+import src.settings.models  # noqa: F401  (side effect: register tables)
+import src.users.models  # noqa: F401  (side effect: register tables)
 
 # App metadata + settings. Importing models populates Base.metadata.
 from src.database import ASYNC_CONNECT_ARGS, ASYNC_DATABASE_URL, Base
-import src.users.models  # noqa: F401  (side effect: register tables)
 
 config = context.config
 
