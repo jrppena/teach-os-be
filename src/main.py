@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.config import app_settings
 from src.exceptions import AppException, app_exception_handler
 from src.auth.router import router as auth_router
+from src.settings.router import router as settings_router
 
 # TODO: re-enable when src/lesson_plans is implemented
 # from src.lesson_plans.router import router as lesson_plans_router
@@ -36,6 +37,7 @@ app.add_middleware(
 app.add_exception_handler(AppException, app_exception_handler)  # type: ignore[arg-type]
 
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(settings_router, prefix="/api/v1")
 # TODO: re-enable when src/lesson_plans is implemented
 # app.include_router(lesson_plans_router, prefix="/api/v1")
 

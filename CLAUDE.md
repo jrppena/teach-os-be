@@ -27,7 +27,8 @@ and generates lesson plans using the Anthropic Claude API.
   naming convention. Inject the session with `DbSession = Annotated[AsyncSession, Depends(get_db)]`.
 - Config is split per domain (one `BaseSettings` each): global `APP_` prefix
   ([src/config.py](src/config.py)), `FIREBASE_` ([src/auth/config.py](src/auth/config.py)),
-  and `DATABASE_URL` ([src/database.py](src/database.py)).
+  `DATABASE_URL` ([src/database.py](src/database.py)), and `PROVIDER_KEY_ENCRYPTION_KEY`
+  ([src/settings/config.py](src/settings/config.py)).
 
 **FastAPI conventions — follow [AGENTS.md](AGENTS.md) (the authority for this repo):**
 - **Structure:** organize by domain, not by file type. Cross-domain imports use the explicit
@@ -64,22 +65,37 @@ and generates lesson plans using the Anthropic Claude API.
 - Migrations: `alembic init -t async migrations`, then `alembic revision --autogenerate` / `alembic upgrade head`
 
 **Key directories:**
-- `src/` — application code. `src/auth/` (Firebase token verification) and `src/users/`
-  (canonical profile: `models.py`, `schemas.py`, `service.py`) are the built domains.
+- `src/` — application code. Built domains: `src/auth/` (Firebase token verification),
+  `src/users/` (canonical profile: `models.py`, `schemas.py`, `service.py`,
+  `dependencies.py`), and `src/settings/` (provider-key persistence — see below).
 - `src/main.py`, `src/config.py`, `src/database.py`, `src/exceptions.py` — app-level shared modules.
 - `alembic.ini` — Alembic config (`script_location = migrations`, dated `file_template`).
 - Env vars in `.env`: `DATABASE_URL`, `AI_API_KEY`, `AI_MODEL`, `AI_MAX_TOKENS`,
-  `APP_ENVIRONMENT`, `APP_CORS_ORIGINS`, `APP_SECRET_KEY`. Firebase credentials are set via
-  individual `FIREBASE_*` vars (`FIREBASE_PROJECT_ID`, `FIREBASE_PRIVATE_KEY_ID`,
-  `FIREBASE_PRIVATE_KEY`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_CLIENT_ID`,
-  `FIREBASE_CLIENT_X509_CERT_URL`, plus optional URI/domain fields with defaults) — no
-  JSON file is needed. `src/auth/firebase.py` assembles the cert dict at startup.
+  `APP_ENVIRONMENT`, `APP_CORS_ORIGINS`, `APP_SECRET_KEY`, `PROVIDER_KEY_ENCRYPTION_KEY`
+  (Fernet key — generate with
+  `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`).
+  Firebase credentials are set via individual `FIREBASE_*` vars (`FIREBASE_PROJECT_ID`,
+  `FIREBASE_PRIVATE_KEY_ID`, `FIREBASE_PRIVATE_KEY`, `FIREBASE_CLIENT_EMAIL`,
+  `FIREBASE_CLIENT_ID`, `FIREBASE_CLIENT_X509_CERT_URL`, plus optional URI/domain fields
+  with defaults) — no JSON file is needed. `src/auth/firebase.py` assembles the cert dict
+  at startup.
 
 **Auth ↔ users wiring (built):** the FE registers via `POST /api/v1/auth/register` and loads the
 profile via `GET /api/v1/auth/user/{uid}`. `src/users/schemas.py` uses a **camelCase alias
 generator** (`alias_generator=to_camel`, `populate_by_name=True`, `from_attributes=True`) so JSON
 matches the FE's camelCase `User`/`RegisterInput`; the DB stays snake_case. The `user` table is
 created by `migrations/versions/2026-06-25_create_user_table.py`. **No team concept** (removed).
+
+**Settings domain (built):** `src/settings/` persists AI-provider API keys scoped to the
+authenticated Firebase user. Endpoints: `GET /api/v1/settings/provider-keys` (masked/write-only
+— returns `configured` flag + masked preview, never the raw key) and
+`PATCH /api/v1/settings/provider-keys` (partial update — `activeProvider`, and per-provider
+key map where `""` clears the key). Keys are encrypted at rest with Fernet
+(`cryptography>=42.0`). Tables: `provider_setting` (active-provider preference per user) and
+`provider_key` (encrypted key per user+provider, UNIQUE(user_id, provider)), both FK→`user.id`
+with `ondelete="CASCADE"`. Migration: `migrations/versions/2026-06-26_create_provider_keys_tables.py`.
+The `CurrentDbUser` dependency (`src/users/dependencies.py`) resolves a Firebase token to the
+DB `User` row; reuse it in future domains (e.g. `src/lesson_plans/`) that need the UUID.
 
 > **Missing / incomplete information — please confirm with the user before relying on it:**
 > - `src/lesson_plans/` is referenced by [src/main.py](src/main.py) but does not exist yet; its
