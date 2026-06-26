@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.settings.models import ProviderKey, ProviderSetting
 from src.settings.schemas import (
     ProviderId,
-    ProviderKeyStatus,
     ProviderKeysResponse,
+    ProviderKeyStatus,
     ProviderKeysUpdate,
 )
 from src.settings.utils import decrypt, encrypt, mask
@@ -28,14 +28,14 @@ async def get_provider_keys(db: AsyncSession, user_id: uuid.UUID) -> ProviderKey
     provider; never exposes the raw key.
     Side effects: two read-only queries.
     """
-    setting_row = await db.scalar(
-        select(ProviderSetting).where(ProviderSetting.user_id == user_id)
-    )
+    setting_row = await db.scalar(select(ProviderSetting).where(ProviderSetting.user_id == user_id))
     active_provider = ProviderId(setting_row.active_provider) if setting_row else ProviderId.GEMINI
 
     key_rows = (
-        await db.execute(select(ProviderKey).where(ProviderKey.user_id == user_id))
-    ).scalars().all()
+        (await db.execute(select(ProviderKey).where(ProviderKey.user_id == user_id)))
+        .scalars()
+        .all()
+    )
 
     key_map: dict[str, ProviderKey] = {row.provider: row for row in key_rows}
 
@@ -64,10 +64,12 @@ async def update_provider_keys(
     Side effects: upserts ``provider_setting`` and zero or more ``provider_key``
     rows; may delete key rows; commits the session.
     """
-    active = payload.active_provider.value if payload.active_provider is not None else ProviderId.GEMINI.value
-    setting_row = await db.scalar(
-        select(ProviderSetting).where(ProviderSetting.user_id == user_id)
+    active = (
+        payload.active_provider.value
+        if payload.active_provider is not None
+        else ProviderId.GEMINI.value
     )
+    setting_row = await db.scalar(select(ProviderSetting).where(ProviderSetting.user_id == user_id))
     if setting_row is None:
         db.add(ProviderSetting(user_id=user_id, active_provider=active))
     else:
@@ -101,3 +103,29 @@ async def update_provider_keys(
 
     await db.commit()
     return await get_provider_keys(db, user_id)
+
+
+async def get_active_provider_key(
+    db: AsyncSession, user_id: uuid.UUID
+) -> tuple[ProviderId, str | None]:
+    """Return the user's active provider and its decrypted API key (or ``None``).
+
+    Inputs: an async session and the internal user UUID.
+    Outputs: ``(active_provider, plaintext_key_or_None)``. The key is ``None`` when
+    no key row exists for the active provider — the caller (e.g. the lesson-plans
+    service) decides how to handle a missing key, so this module stays free of
+    other domains' exceptions.
+    Side effects: two read-only queries; decrypts the stored ciphertext.
+    """
+    setting_row = await db.scalar(select(ProviderSetting).where(ProviderSetting.user_id == user_id))
+    active = ProviderId(setting_row.active_provider) if setting_row else ProviderId.GEMINI
+
+    key_row = await db.scalar(
+        select(ProviderKey).where(
+            ProviderKey.user_id == user_id,
+            ProviderKey.provider == active.value,
+        )
+    )
+    if key_row is None:
+        return active, None
+    return active, decrypt(key_row.encrypted_key)

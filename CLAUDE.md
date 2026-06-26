@@ -80,6 +80,25 @@ and generates lesson plans using the Anthropic Claude API.
   with defaults) — no JSON file is needed. `src/auth/firebase.py` assembles the cert dict
   at startup.
 
+**Lesson-plans domain (built):** `src/lesson_plans/` generates and persists DepEd MATATAG / ILAW
+lesson plans. Endpoints (mounted under `/api/v1`, all require `CurrentDbUser`): `POST /lesson-plans`
+(generate via the user's active provider + save → `201` `LessonPlanDetail`), `GET /lesson-plans`
+(list summaries, newest first), `GET /lesson-plans/{id}`, `DELETE /lesson-plans/{id}` (`204`).
+Generation is **provider-agnostic over raw `httpx`** (no provider SDKs): `service.generate_and_save`
+resolves the active provider + decrypted key via `settings_service.get_active_provider_key`, builds
+messages from `prompts.py` (`LESSON_PLAN_SYSTEM_PROMPT` + `build_lesson_plan_user_message`), calls
+`providers.generate_json` (Gemini `generateContent` with `responseMimeType=application/json`; Grok
+OpenAI-compatible `chat/completions` with `response_format` json_schema), validates the JSON against
+the `GeneratedLessonPlan` Pydantic model, then **overrides deterministic fields** (header,
+signatories, session labels, `[Teacher to complete]` reflections, per-session array lengths) from the
+request. Per-provider model IDs/URLs/timeout are env-overridable in `config.py` (`LESSON_PLAN_*`;
+defaults `gemini-2.5-flash` / `grok-3`). Domain exceptions (`exceptions.py`) map to `409`
+(no key configured), `502` (provider error / invalid response). Table `lesson_plan` (denormalized
+header columns + `plan_json` JSONB, FK→`user.id` `CASCADE`) via
+`migrations/versions/2026-06-26_create_lesson_plan_table.py`. `migrations/env.py` now imports the
+settings + lesson_plans models so autogenerate sees every table. The legacy `AI_*` env vars are
+Anthropic leftovers and are unused.
+
 **Auth ↔ users wiring (built):** the FE registers via `POST /api/v1/auth/register` and loads the
 profile via `GET /api/v1/auth/user/{uid}`. `src/users/schemas.py` uses a **camelCase alias
 generator** (`alias_generator=to_camel`, `populate_by_name=True`, `from_attributes=True`) so JSON
@@ -98,14 +117,16 @@ The `CurrentDbUser` dependency (`src/users/dependencies.py`) resolves a Firebase
 DB `User` row; reuse it in future domains (e.g. `src/lesson_plans/`) that need the UUID.
 
 > **Missing / incomplete information — please confirm with the user before relying on it:**
-> - `src/lesson_plans/` is referenced by [src/main.py](src/main.py) but does not exist yet; its
->   import and `include_router` are **commented out** with a TODO until the domain is built.
+> - `src/lesson_plans/` is now **built** and mounted in [src/main.py](src/main.py) (see the
+>   Lesson-plans domain above).
 > - No `tests/` directory exists yet despite being configured.
 > - Migrations exist (`migrations/env.py` is async and sources `DATABASE_URL` from
 >   `src.database.db_settings`), but require a reachable Postgres + installed deps to run
->   (`alembic upgrade head`); they have not been applied in this environment.
-> - `.env` defines `AI_API_KEY` / `AI_MODEL` / `AI_MAX_TOKENS`, but no Anthropic config
->   module or AI service is present yet.
+>   (`alembic upgrade head`); the new `lesson_plan` migration has not been applied in this
+>   environment.
+> - Generation uses the user's **active provider (Gemini or Grok)** over `httpx`, not Anthropic;
+>   the legacy `AI_API_KEY` / `AI_MODEL` / `AI_MAX_TOKENS` env vars are unused. Per-provider
+>   settings live in `src/lesson_plans/config.py` (`LESSON_PLAN_*`, all defaulted).
 > - Firebase credentials are now supplied via individual `FIREBASE_*` env vars; no JSON
 >   service-account file is needed. Fill in the real values in `.env` before running.
 
