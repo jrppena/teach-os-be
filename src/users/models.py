@@ -36,6 +36,11 @@ class User(Base):
     last_name: Mapped[str] = mapped_column(String(100))
     role: Mapped[str] = mapped_column(String(20), default="USER", server_default="USER")
     bio: Mapped[str] = mapped_column(String, default="", server_default="")
+    school_name: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    region: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    division: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    district: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    school_address: Mapped[str] = mapped_column(String(500), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

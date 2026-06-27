@@ -69,6 +69,11 @@ class UserResponse(_CamelModel):
     email: str
     role: UserRole
     bio: str
+    school_name: str
+    region: str
+    division: str
+    district: str
+    school_address: str
     created_at: datetime
 
     @field_serializer("id", when_used="json")
@@ -79,3 +84,21 @@ class UserResponse(_CamelModel):
     @field_serializer("created_at", when_used="json")
     def _serialize_created_at(self, value: datetime) -> str:
         return value.isoformat()
+
+
+class UpdateProfileInput(_CamelModel):
+    """Body for ``PATCH /auth/user`` — partial update of the teacher's profile.
+
+    All fields are optional; only provided fields are written to the DB. Primarily
+    used to store DepEd school header information for DOCX export.
+
+    Inputs: camelCase JSON body (fields omitted are left unchanged).
+    Outputs: consumed by ``user_service.update_profile``.
+    Side effects: none at schema level.
+    """
+
+    school_name: str | None = None
+    region: str | None = None
+    division: str | None = None
+    district: str | None = None
+    school_address: str | None = None

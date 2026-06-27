@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.users.models import User
-from src.users.schemas import RegisterInput
+from src.users.schemas import RegisterInput, UpdateProfileInput
 
 
 async def get_by_firebase_uid(db: AsyncSession, firebase_uid: str) -> User | None:
@@ -41,6 +41,21 @@ async def create_user(db: AsyncSession, payload: RegisterInput) -> User:
         bio=payload.bio,
     )
     db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+async def update_profile(db: AsyncSession, user: User, patch: UpdateProfileInput) -> User:
+    """Partially update a user's school profile fields.
+
+    Inputs: an async session, the persisted ``User``, and an ``UpdateProfileInput``
+    (only non-None fields are applied).
+    Outputs: the refreshed ``User``.
+    Side effects: updates the row and commits.
+    """
+    for field, value in patch.model_dump(exclude_none=True).items():
+        setattr(user, field, value)
     await db.commit()
     await db.refresh(user)
     return user
