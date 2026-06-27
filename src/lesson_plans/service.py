@@ -14,6 +14,7 @@ Plus read/delete helpers for the dashboard history. All DB access is SQLAlchemy
 2.0 async.
 """
 
+import io
 import uuid
 from collections.abc import Callable
 from typing import TypeVar
@@ -24,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.exceptions import AppException
 from src.lesson_plans import providers
+from src.lesson_plans.docx_export import SchoolHeader, build_lesson_plan_docx, docx_filename
 from src.lesson_plans.exceptions import NoProviderKeyConfigured, ProviderResponseError
 from src.lesson_plans.models import LessonPlan
 from src.lesson_plans.prompts import (
@@ -266,3 +268,36 @@ async def delete_plan(db: AsyncSession, user_id: uuid.UUID, plan_id: uuid.UUID) 
         raise AppException(status_code=404, detail="Lesson plan not found.")
     await db.delete(row)
     await db.commit()
+
+
+async def export_docx(
+    db: AsyncSession,
+    user: User,
+    plan_id: uuid.UUID,
+    draft: GeneratedLessonPlan,
+) -> tuple[io.BytesIO, str]:
+    """Validate plan ownership and build a DOCX from the provided draft.
+
+    Inputs: an async session, the authenticated ``User``, the plan UUID for ownership
+    validation, and the ``GeneratedLessonPlan`` draft (may include unsaved local edits).
+    Outputs: a tuple of ``(BytesIO buffer, filename)`` ready for streaming.
+    Side effects: one read-only ownership check; the DOCX builder is CPU-bound and must
+    be offloaded via ``run_in_threadpool`` by the caller.
+    Raises ``AppException`` (404) if the plan is not found or not owned by the user.
+    """
+    row = await db.scalar(
+        select(LessonPlan).where(LessonPlan.id == plan_id, LessonPlan.user_id == user.id)
+    )
+    if row is None:
+        raise AppException(status_code=404, detail="Lesson plan not found.")
+
+    school = SchoolHeader(
+        school_name=user.school_name,
+        region=user.region,
+        division=user.division,
+        district=user.district,
+        school_address=user.school_address,
+    )
+    buf = build_lesson_plan_docx(draft, school)
+    filename = docx_filename(draft.lesson_information.title)
+    return buf, filename

@@ -1,11 +1,12 @@
 """Lesson-plans domain router.
 
-Exposes the generation + history endpoints under ``/lesson-plans``:
+Exposes the generation + history + export endpoints under ``/lesson-plans``:
 
-- ``POST   /lesson-plans``       generate via the active provider and save (201)
-- ``GET    /lesson-plans``       list the user's saved plans (summaries)
-- ``GET    /lesson-plans/{id}``  fetch one saved plan in full
-- ``DELETE /lesson-plans/{id}``  delete one saved plan (204)
+- ``POST   /lesson-plans``              generate via the active provider and save (201)
+- ``GET    /lesson-plans``              list the user's saved plans (summaries)
+- ``GET    /lesson-plans/{id}``         fetch one saved plan in full
+- ``DELETE /lesson-plans/{id}``         delete one saved plan (204)
+- ``POST   /lesson-plans/{id}/export``  stream DOCX for a (possibly edited) draft
 
 All routes require a valid Firebase token resolved to the DB user via
 ``CurrentDbUser``.
@@ -15,11 +16,13 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_db
 from src.lesson_plans import service as lesson_plan_service
 from src.lesson_plans.schemas import (
+    GeneratedLessonPlan,
     LessonPlanDetail,
     LessonPlanGenerateRequest,
     LessonPlanSummary,
@@ -122,3 +125,47 @@ async def delete_lesson_plan(
     not owned.
     """
     await lesson_plan_service.delete_plan(db, current_db_user.id, plan_id)
+
+
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+@router.post(
+    "/{plan_id}/export",
+    summary="Export a lesson plan as DOCX",
+    description=(
+        "Builds and streams a DepEd MATATAG / ILAW lesson-plan DOCX from the provided "
+        "draft (which may include unsaved local edits). Validates that the plan is owned "
+        "by the authenticated user. The school header block is populated from the "
+        "teacher's saved profile fields (school name, region, division, district, address)."
+    ),
+    responses={
+        **_401,
+        **_404,
+        200: {
+            "description": "DOCX binary stream",
+            "content": {_DOCX_MIME: {}},
+        },
+    },
+)
+async def export_lesson_plan_docx(
+    plan_id: uuid.UUID,
+    draft: GeneratedLessonPlan,
+    current_db_user: CurrentDbUser,
+    db: DbSession,
+) -> StreamingResponse:
+    """Stream a DOCX for the given plan draft.
+
+    Inputs: the plan UUID (for ownership check), the ``GeneratedLessonPlan`` draft
+    from the request body (may include the teacher's local edits), and the resolved
+    DB ``User`` (provides school header fields).
+    Outputs: a streaming DOCX response with a ``Content-Disposition: attachment`` header.
+    Side effects: one read-only ownership check; the DOCX is built synchronously in the
+    service (python-docx is not I/O-bound; documents are small enough to build inline).
+    """
+    buf, filename = await lesson_plan_service.export_docx(db, current_db_user, plan_id, draft)
+    return StreamingResponse(
+        buf,
+        media_type=_DOCX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
