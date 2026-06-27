@@ -17,17 +17,20 @@ Plus read/delete helpers for the dashboard history. All DB access is SQLAlchemy
 import io
 import uuid
 from collections.abc import Callable
+from functools import partial
 from typing import TypeVar
 
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from src.exceptions import AppException
 from src.lesson_plans import providers
 from src.lesson_plans.docx_export import SchoolHeader, build_lesson_plan_docx, docx_filename
 from src.lesson_plans.exceptions import NoProviderKeyConfigured, ProviderResponseError
 from src.lesson_plans.models import LessonPlan
+from src.lesson_plans.pdf_export import build_lesson_plan_pdf, pdf_filename
 from src.lesson_plans.prompts import (
     LESSON_PLAN_JSON_SCHEMA,
     LESSON_PLAN_SYSTEM_PROMPT,
@@ -270,6 +273,28 @@ async def delete_plan(db: AsyncSession, user_id: uuid.UUID, plan_id: uuid.UUID) 
     await db.commit()
 
 
+async def _load_school_header(db: AsyncSession, user: User, plan_id: uuid.UUID) -> SchoolHeader:
+    """Validate plan ownership and build the school header for export.
+
+    Inputs: an async session, the authenticated ``User``, and the plan UUID.
+    Outputs: a ``SchoolHeader`` populated from the user's profile fields.
+    Side effects: one read-only ownership check.
+    Raises ``AppException`` (404) if the plan is not found or not owned by the user.
+    """
+    row = await db.scalar(
+        select(LessonPlan).where(LessonPlan.id == plan_id, LessonPlan.user_id == user.id)
+    )
+    if row is None:
+        raise AppException(status_code=404, detail="Lesson plan not found.")
+    return SchoolHeader(
+        school_name=user.school_name,
+        region=user.region,
+        division=user.division,
+        district=user.district,
+        school_address=user.school_address,
+    )
+
+
 async def export_docx(
     db: AsyncSession,
     user: User,
@@ -285,19 +310,31 @@ async def export_docx(
     be offloaded via ``run_in_threadpool`` by the caller.
     Raises ``AppException`` (404) if the plan is not found or not owned by the user.
     """
-    row = await db.scalar(
-        select(LessonPlan).where(LessonPlan.id == plan_id, LessonPlan.user_id == user.id)
-    )
-    if row is None:
-        raise AppException(status_code=404, detail="Lesson plan not found.")
-
-    school = SchoolHeader(
-        school_name=user.school_name,
-        region=user.region,
-        division=user.division,
-        district=user.district,
-        school_address=user.school_address,
-    )
+    school = await _load_school_header(db, user, plan_id)
     buf = build_lesson_plan_docx(draft, school)
     filename = docx_filename(draft.lesson_information.title)
+    return buf, filename
+
+
+async def export_pdf(
+    db: AsyncSession,
+    user: User,
+    plan_id: uuid.UUID,
+    draft: GeneratedLessonPlan,
+) -> tuple[io.BytesIO, str]:
+    """Validate plan ownership and build a PDF from the provided draft.
+
+    Mirrors ``export_docx`` — same ownership check, same school header population —
+    but delegates to the reportlab-based ``build_lesson_plan_pdf`` builder.
+
+    Inputs: an async session, the authenticated ``User``, the plan UUID for ownership
+    validation, and the ``GeneratedLessonPlan`` draft (may include unsaved local edits).
+    Outputs: a tuple of ``(BytesIO buffer, filename)`` ready for streaming.
+    Side effects: one read-only ownership check; the PDF builder is CPU-bound and must
+    be offloaded via ``run_in_threadpool`` by the caller.
+    Raises ``AppException`` (404) if the plan is not found or not owned by the user.
+    """
+    school = await _load_school_header(db, user, plan_id)
+    buf = await run_in_threadpool(partial(build_lesson_plan_pdf, draft, school))
+    filename = pdf_filename(draft.lesson_information.title)
     return buf, filename

@@ -9,7 +9,7 @@ and generates lesson plans using the Anthropic Claude API.
 - Pydantic v2 (≥2.7) + pydantic-settings ≥2.4 for typed config
 - SQLAlchemy 2.0 **async** + asyncpg (PostgreSQL), Alembic ≥1.13 for migrations
 - `firebase-admin` for ID-token auth, `anthropic` SDK for AI generation, `httpx` for HTTP
-- `python-docx>=1.1` for DOCX lesson-plan export
+- `python-docx>=1.1` for DOCX lesson-plan export; `reportlab>=4.0` for PDF export
 - Tooling: `ruff` (lint + format), `pytest` + `pytest-asyncio` (auto mode) + `pytest-cov`
 
 **Architecture (big picture):**
@@ -88,6 +88,10 @@ lesson plans. Endpoints (mounted under `/api/v1`, all require `CurrentDbUser`): 
 **`POST /lesson-plans/{id}/export`** (stream a DOCX for the plan draft in the request body — body is
 the full `GeneratedLessonPlan` including any local edits; validates ownership; populates the DepEd
 school header from the user's profile fields; returns `StreamingResponse` with `Content-Disposition: attachment`).
+**`POST /lesson-plans/{id}/export/pdf`** (same ownership/school-header logic; streams a PDF built with
+reportlab — see `src/lesson_plans/pdf_export.py` — whose layout mirrors the DOCX: same school header,
+banners, label/guidance column, per-session columns, amber `[Teacher to complete]` cells, and
+signatories; the build is CPU-bound and offloaded via `run_in_threadpool`).
 Generation is **provider-agnostic over raw `httpx`** (no provider SDKs): `service.generate_and_save`
 resolves the active provider + decrypted key via `settings_service.get_active_provider_key`, builds
 messages from `prompts.py` (`LESSON_PLAN_SYSTEM_PROMPT` + `build_lesson_plan_user_message`), calls
@@ -101,8 +105,11 @@ defaults `gemini-2.5-flash` / `grok-3`). Domain exceptions (`exceptions.py`) map
 header columns + `plan_json` JSONB, FK→`user.id` `CASCADE`) via
 `migrations/versions/2026-06-26_create_lesson_plan_table.py`. DOCX builder lives in
 `src/lesson_plans/docx_export.py` (`build_lesson_plan_docx(plan, school) -> BytesIO`; pure sync;
-uses `python-docx` + raw XML helpers for shading/borders); ILAW label/guidance constants in
-`src/lesson_plans/constants.py`. `migrations/env.py` now imports the settings + lesson_plans models
+uses `python-docx` + raw XML helpers for shading/borders). PDF builder lives in
+`src/lesson_plans/pdf_export.py` (`build_lesson_plan_pdf(plan, school) -> BytesIO`; pure sync;
+uses reportlab Platypus `Table`/`TableStyle`; mirrors the DOCX layout; offloaded via
+`run_in_threadpool` in `service.export_pdf`). ILAW label/guidance constants in
+`src/lesson_plans/constants.py` (shared by both builders). `migrations/env.py` now imports the settings + lesson_plans models
 so autogenerate sees every table. The legacy `AI_*` env vars are Anthropic leftovers and are unused.
 
 **Auth ↔ users wiring (built):** the FE registers via `POST /api/v1/auth/register` and loads the

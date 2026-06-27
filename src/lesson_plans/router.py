@@ -128,6 +128,7 @@ async def delete_lesson_plan(
 
 
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_PDF_MIME = "application/pdf"
 
 
 @router.post(
@@ -167,5 +168,47 @@ async def export_lesson_plan_docx(
     return StreamingResponse(
         buf,
         media_type=_DOCX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post(
+    "/{plan_id}/export/pdf",
+    summary="Export a lesson plan as PDF",
+    description=(
+        "Builds and streams a DepEd MATATAG / ILAW lesson-plan PDF from the provided "
+        "draft (which may include unsaved local edits). The layout mirrors the DOCX export: "
+        "centered school header, ILAW table with one column per session, section banners, "
+        "shading, and amber [Teacher to complete] highlighting. Validates plan ownership; "
+        "populates the school header from the teacher's saved profile fields."
+    ),
+    responses={
+        **_401,
+        **_404,
+        200: {
+            "description": "PDF binary stream",
+            "content": {_PDF_MIME: {}},
+        },
+    },
+)
+async def export_lesson_plan_pdf(
+    plan_id: uuid.UUID,
+    draft: GeneratedLessonPlan,
+    current_db_user: CurrentDbUser,
+    db: DbSession,
+) -> StreamingResponse:
+    """Stream a PDF for the given plan draft.
+
+    Inputs: the plan UUID (for ownership check), the ``GeneratedLessonPlan`` draft
+    from the request body (may include the teacher's local edits), and the resolved
+    DB ``User`` (provides school header fields).
+    Outputs: a streaming PDF response with a ``Content-Disposition: attachment`` header.
+    Side effects: one read-only ownership check; the reportlab builder is CPU-bound and
+    is offloaded via ``run_in_threadpool`` so it does not block the event loop.
+    """
+    buf, filename = await lesson_plan_service.export_pdf(db, current_db_user, plan_id, draft)
+    return StreamingResponse(
+        buf,
+        media_type=_PDF_MIME,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
