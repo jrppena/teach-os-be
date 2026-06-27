@@ -9,6 +9,7 @@ and generates lesson plans using the Anthropic Claude API.
 - Pydantic v2 (≥2.7) + pydantic-settings ≥2.4 for typed config
 - SQLAlchemy 2.0 **async** + asyncpg (PostgreSQL), Alembic ≥1.13 for migrations
 - `firebase-admin` for ID-token auth, `anthropic` SDK for AI generation, `httpx` for HTTP
+- `python-docx>=1.1` for DOCX lesson-plan export
 - Tooling: `ruff` (lint + format), `pytest` + `pytest-asyncio` (auto mode) + `pytest-cov`
 
 **Architecture (big picture):**
@@ -80,10 +81,13 @@ and generates lesson plans using the Anthropic Claude API.
   with defaults) — no JSON file is needed. `src/auth/firebase.py` assembles the cert dict
   at startup.
 
-**Lesson-plans domain (built):** `src/lesson_plans/` generates and persists DepEd MATATAG / ILAW
+**Lesson-plans domain (built):** `src/lesson_plans/` generates, persists, and exports DepEd MATATAG / ILAW
 lesson plans. Endpoints (mounted under `/api/v1`, all require `CurrentDbUser`): `POST /lesson-plans`
 (generate via the user's active provider + save → `201` `LessonPlanDetail`), `GET /lesson-plans`
-(list summaries, newest first), `GET /lesson-plans/{id}`, `DELETE /lesson-plans/{id}` (`204`).
+(list summaries, newest first), `GET /lesson-plans/{id}`, `DELETE /lesson-plans/{id}` (`204`),
+**`POST /lesson-plans/{id}/export`** (stream a DOCX for the plan draft in the request body — body is
+the full `GeneratedLessonPlan` including any local edits; validates ownership; populates the DepEd
+school header from the user's profile fields; returns `StreamingResponse` with `Content-Disposition: attachment`).
 Generation is **provider-agnostic over raw `httpx`** (no provider SDKs): `service.generate_and_save`
 resolves the active provider + decrypted key via `settings_service.get_active_provider_key`, builds
 messages from `prompts.py` (`LESSON_PLAN_SYSTEM_PROMPT` + `build_lesson_plan_user_message`), calls
@@ -95,15 +99,21 @@ request. Per-provider model IDs/URLs/timeout are env-overridable in `config.py` 
 defaults `gemini-2.5-flash` / `grok-3`). Domain exceptions (`exceptions.py`) map to `409`
 (no key configured), `502` (provider error / invalid response). Table `lesson_plan` (denormalized
 header columns + `plan_json` JSONB, FK→`user.id` `CASCADE`) via
-`migrations/versions/2026-06-26_create_lesson_plan_table.py`. `migrations/env.py` now imports the
-settings + lesson_plans models so autogenerate sees every table. The legacy `AI_*` env vars are
-Anthropic leftovers and are unused.
+`migrations/versions/2026-06-26_create_lesson_plan_table.py`. DOCX builder lives in
+`src/lesson_plans/docx_export.py` (`build_lesson_plan_docx(plan, school) -> BytesIO`; pure sync;
+uses `python-docx` + raw XML helpers for shading/borders); ILAW label/guidance constants in
+`src/lesson_plans/constants.py`. `migrations/env.py` now imports the settings + lesson_plans models
+so autogenerate sees every table. The legacy `AI_*` env vars are Anthropic leftovers and are unused.
 
 **Auth ↔ users wiring (built):** the FE registers via `POST /api/v1/auth/register` and loads the
-profile via `GET /api/v1/auth/user/{uid}`. `src/users/schemas.py` uses a **camelCase alias
-generator** (`alias_generator=to_camel`, `populate_by_name=True`, `from_attributes=True`) so JSON
-matches the FE's camelCase `User`/`RegisterInput`; the DB stays snake_case. The `user` table is
-created by `migrations/versions/2026-06-25_create_user_table.py`. **No team concept** (removed).
+profile via `GET /api/v1/auth/user/{uid}`. A new **`PATCH /api/v1/auth/user`** endpoint accepts an
+`UpdateProfileInput` (optional school fields: `school_name`, `region`, `division`, `district`,
+`school_address`) and returns the updated `UserResponse`. `src/users/schemas.py` uses a **camelCase
+alias generator** (`alias_generator=to_camel`, `populate_by_name=True`, `from_attributes=True`) so
+JSON matches the FE's camelCase `User`/`RegisterInput`; the DB stays snake_case. The `user` table
+is created by `migrations/versions/2026-06-25_create_user_table.py`; the five school fields are
+added by `migrations/versions/2026-06-27_add_school_fields_to_user.py` (all `NOT NULL DEFAULT ""`).
+**No team concept** (removed).
 
 **Settings domain (built):** `src/settings/` persists AI-provider API keys scoped to the
 authenticated Firebase user. Endpoints: `GET /api/v1/settings/provider-keys` (masked/write-only
