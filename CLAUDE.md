@@ -68,7 +68,8 @@ and generates lesson plans using the Anthropic Claude API.
 **Key directories:**
 - `src/` — application code. Built domains: `src/auth/` (Firebase token verification),
   `src/users/` (canonical profile: `models.py`, `schemas.py`, `service.py`,
-  `dependencies.py`), and `src/settings/` (provider-key persistence — see below).
+  `dependencies.py`), `src/settings/` (provider-key persistence — see below), and
+  `src/curriculum/` (DepEd grade-level / learning-area reference data — see below).
 - `src/main.py`, `src/config.py`, `src/database.py`, `src/exceptions.py` — app-level shared modules.
 - `alembic.ini` — Alembic config (`script_location = migrations`, dated `file_template`).
 - Env vars in `.env`: `DATABASE_URL`, `AI_API_KEY`, `AI_MODEL`, `AI_MAX_TOKENS`,
@@ -132,6 +133,33 @@ key map where `""` clears the key). Keys are encrypted at rest with Fernet
 with `ondelete="CASCADE"`. Migration: `migrations/versions/2026-06-26_create_provider_keys_tables.py`.
 The `CurrentDbUser` dependency (`src/users/dependencies.py`) resolves a Firebase token to the
 DB `User` row; reuse it in future domains (e.g. `src/lesson_plans/`) that need the UUID.
+
+**Curriculum domain (built):** `src/curriculum/` serves read-only DepEd reference data so the FE
+populates the lesson-plan grade/subject dropdowns from the DB instead of hardcoded arrays. Four
+tables on the shared `Base`:
+- `grade_level` — Grade 1-12 (`code` e.g. `GRADE_7`, `name`, `curriculum`, `order_index`).
+- `cluster` — Strengthened-SHS elective cluster (`name`, `track` `ACADEMIC`/`TECHPRO`,
+  `order_index`; UNIQUE(`name`)). Shared across grades via M2M.
+- `cluster_grade_level` — M2M: which grades offer a cluster (currently G11+G12 for all clusters).
+- `subject` — one row per subject. Core/K-10 subjects have `grade_level_id` set (FK→`grade_level`
+  CASCADE) and `cluster_id=NULL`; SHS elective subjects have `cluster_id` set (FK→`cluster`
+  SET NULL) and `grade_level_id=NULL`. An XOR CHECK enforces exactly one is non-NULL.
+  UNIQUE(`grade_level_id`, `name`) + UNIQUE(`cluster_id`, `name`); NULLs are distinct in Postgres.
+
+Endpoints (mounted under `/api/v1`, both require `CurrentUser`): `GET /curriculum/grade-levels`
+and `GET /curriculum/grade-levels/{code}/subjects` (404 on unknown code) → camelCase
+`GradeLevelResponse` / `SubjectResponse` (each elective row nests a `ClusterResponse` so the FE
+can group by track → cluster). `list_subjects` in `service.py` returns core subjects first (by
+`grade_level_id`) then electives ordered by cluster `order_index` then subject `order_index`.
+
+Migrations (in order): `2026-06-27_create_curriculum_tables.py` (schema: `grade_level` +
+`learning_area`), `2026-06-27_seed_curriculum_data.py` (12 grades + K-10 / SHS core subjects),
+`2026-06-27_add_cluster_rename_to_subject.py` (schema refactor: creates `cluster` +
+`cluster_grade_level`, renames `learning_area`→`subject`, adds `cluster_id` FK, drops `track`,
+makes `grade_level_id` nullable, adds XOR CHECK), `2026-06-27_seed_cluster_subjects.py` (data:
+deletes old ELECTIVE rows, inserts 15 clusters + grade links, inserts per-cluster elective subjects).
+Enums (`Curriculum`, `SubjectCategory`, `Track`) live in `src/curriculum/constants.py`;
+`migrations/env.py` imports the curriculum models so autogenerate sees all tables.
 
 > **Missing / incomplete information — please confirm with the user before relying on it:**
 > - `src/lesson_plans/` is now **built** and mounted in [src/main.py](src/main.py) (see the
