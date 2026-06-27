@@ -14,6 +14,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy.pool import NullPool
 
+import src.curriculum.models  # noqa: F401  (side effect: register tables)
 import src.lesson_plans.models  # noqa: F401  (side effect: register tables)
 import src.settings.models  # noqa: F401  (side effect: register tables)
 import src.users.models  # noqa: F401  (side effect: register tables)

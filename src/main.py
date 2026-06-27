@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.auth.router import router as auth_router
 from src.config import app_settings
+from src.curriculum.router import router as curriculum_router
 from src.exceptions import AppException, app_exception_handler
 from src.lesson_plans.router import router as lesson_plans_router
 from src.settings.router import router as settings_router
@@ -38,6 +39,7 @@ app.add_exception_handler(AppException, app_exception_handler)  # type: ignore[a
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(settings_router, prefix="/api/v1")
 app.include_router(lesson_plans_router, prefix="/api/v1")
+app.include_router(curriculum_router, prefix="/api/v1")
 
 
 @app.get("/health")
