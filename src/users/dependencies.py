@@ -8,12 +8,12 @@ user to the corresponding DB ``User`` row. Chainable by other domains (e.g.
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.auth.dependencies import CurrentUser
 from src.database import get_db
 from src.users import service as user_service
 from src.users.models import User
-from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def get_current_db_user(

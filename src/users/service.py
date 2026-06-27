@@ -4,7 +4,7 @@ Async data-access helpers for the ``user`` table, consumed by the auth endpoints
 in ``src/auth/router.py``. SQLAlchemy 2.0 async only — no blocking/sync sessions.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,5 +53,5 @@ async def touch_last_login(db: AsyncSession, user: User) -> None:
     Outputs: none.
     Side effects: updates one row and commits.
     """
-    user.last_login = datetime.now(timezone.utc)
+    user.last_login = datetime.now(UTC)
     await db.commit()
