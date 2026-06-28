@@ -37,9 +37,7 @@ class ProviderSetting(Base):
     active_provider: Mapped[str] = mapped_column(
         String(20), default="gemini", server_default="gemini"
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -60,7 +58,9 @@ class ProviderKey(Base):
     """
 
     __tablename__ = "provider_key"
-    __table_args__ = (UniqueConstraint("user_id", "provider", name="provider_key_user_id_provider_key"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="provider_key_user_id_provider_key"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -69,9 +69,7 @@ class ProviderKey(Base):
     )
     provider: Mapped[str] = mapped_column(String(20))
     encrypted_key: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

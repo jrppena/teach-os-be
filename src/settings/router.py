@@ -53,7 +53,7 @@ async def get_provider_keys(
     description=(
         "Partial update: ``activeProvider`` switches the active provider; "
         "``keys`` is a provider→value map where a non-empty value upserts the "
-        "key and an empty string ``\"\"`` clears it. Omitted providers are unchanged."
+        'key and an empty string ``""`` clears it. Omitted providers are unchanged.'
     ),
     responses={**_401, **_404},
 )

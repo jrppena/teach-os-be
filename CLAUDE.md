@@ -121,7 +121,15 @@ alias generator** (`alias_generator=to_camel`, `populate_by_name=True`, `from_at
 JSON matches the FE's camelCase `User`/`RegisterInput`; the DB stays snake_case. The `user` table
 is created by `migrations/versions/2026-06-25_create_user_table.py`; the five school fields are
 added by `migrations/versions/2026-06-27_add_school_fields_to_user.py` (all `NOT NULL DEFAULT ""`).
-**No team concept** (removed).
+**No team concept** (removed). The `user` table also carries an **`onboarding_step`** column
+(`String(20)`, `NOT NULL DEFAULT 'WELCOME'`) tracking the FE guided-setup wizard's current step —
+stored as the step *name* (not a boolean) so onboarding is **resumable**. Values mirror the
+`OnboardingStep` StrEnum in `src/users/schemas.py` (`WELCOME` → `SCHOOL_INFO` → `PROVIDER_KEY` →
+`COMPLETED`); it's exposed on `UserResponse.onboardingStep` and advanced via a dedicated
+**`PATCH /api/v1/auth/onboarding`** endpoint (`OnboardingStepUpdate` body `{ step }`, requires
+`CurrentDbUser`, returns the updated `UserResponse`; `user_service.update_onboarding_step`). Added by
+`migrations/versions/2026-06-28_add_onboarding_step_to_user.py`, which backfills **existing** rows to
+`COMPLETED` so only brand-new users see the wizard.
 
 **Settings domain (built):** `src/settings/` persists AI-provider API keys scoped to the
 authenticated Firebase user. Endpoints: `GET /api/v1/settings/provider-keys` (masked/write-only
@@ -133,6 +141,17 @@ key map where `""` clears the key). Keys are encrypted at rest with Fernet
 with `ondelete="CASCADE"`. Migration: `migrations/versions/2026-06-26_create_provider_keys_tables.py`.
 The `CurrentDbUser` dependency (`src/users/dependencies.py`) resolves a Firebase token to the
 DB `User` row; reuse it in future domains (e.g. `src/lesson_plans/`) that need the UUID.
+
+**Feedback domain (built):** `src/feedback/` captures free-form product feedback from authenticated
+teachers. One endpoint — **`POST /api/v1/feedback`** (requires `CurrentDbUser`, returns `201`
+`FeedbackResponse`) — persists a row to the `feedback` table (`id`, `user_id` FK→`user.id`
+`CASCADE` + index, `category`, nullable `rating`, `message` text, `created_at`). `FeedbackCreate`
+validates `category` (`FeedbackCategory` StrEnum in `constants.py`: `GENERAL`/`BUG`/
+`FEATURE_REQUEST`/`LESSON_PLAN_QUALITY`, default `GENERAL`), optional `rating` (`Field(ge=1, le=5)`),
+and `message` (`Field(min_length=1, max_length=2000)`). Same camelCase `_CamelModel` pattern as
+`src/users/schemas.py`. Service: `feedback_service.create_feedback`. Migration:
+`migrations/versions/2026-06-28_create_feedback_table.py`. Router mounted under `/api/v1` in
+`src/main.py`; models registered in `migrations/env.py`. No admin/list endpoint yet (YAGNI).
 
 **Curriculum domain (built):** `src/curriculum/` serves read-only DepEd reference data so the FE
 populates the lesson-plan grade/subject dropdowns from the DB instead of hardcoded arrays. Four
