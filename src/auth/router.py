@@ -7,7 +7,12 @@ from src.auth.dependencies import CurrentUser
 from src.database import get_db
 from src.users import service as user_service
 from src.users.dependencies import CurrentDbUser
-from src.users.schemas import RegisterInput, UpdateProfileInput, UserResponse
+from src.users.schemas import (
+    OnboardingStepUpdate,
+    RegisterInput,
+    UpdateProfileInput,
+    UserResponse,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -96,4 +101,31 @@ async def update_profile(
     Side effects: updates the ``user`` row and commits.
     """
     db_user = await user_service.update_profile(db, current_db_user, payload)
+    return UserResponse.model_validate(db_user)
+
+
+@router.patch(
+    "/onboarding",
+    response_model=UserResponse,
+    summary="Advance the current user's onboarding step",
+    description=(
+        "Sets the authenticated teacher's current onboarding step as they move "
+        "through the guided setup wizard (welcome → school info → AI key) or "
+        "complete it. The step is stored on the user row so onboarding is "
+        "resumable across sessions and devices."
+    ),
+    responses={**_401, **_404},
+)
+async def update_onboarding(
+    payload: OnboardingStepUpdate,
+    current_db_user: CurrentDbUser,
+    db: DbSession,
+) -> UserResponse:
+    """Set the current user's onboarding step.
+
+    Inputs: an ``OnboardingStepUpdate`` body and the resolved DB ``User``.
+    Outputs: the updated ``UserResponse`` reflecting the new step.
+    Side effects: updates the ``user`` row and commits.
+    """
+    db_user = await user_service.update_onboarding_step(db, current_db_user, payload.step)
     return UserResponse.model_validate(db_user)

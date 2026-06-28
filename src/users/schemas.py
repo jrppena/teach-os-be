@@ -21,6 +21,22 @@ class UserRole(StrEnum):
     ADMIN = "ADMIN"
 
 
+class OnboardingStep(StrEnum):
+    """Current step of a user's guided onboarding wizard.
+
+    Stored on the ``user`` row (not a boolean) so onboarding is *resumable* —
+    the FE redirects any non-``COMPLETED`` user to ``/onboarding`` and resumes at
+    their stored step. ``COMPLETED`` means the user has finished (or pre-dates
+    onboarding). Order: ``WELCOME`` → ``SCHOOL_INFO`` → ``PROVIDER_KEY`` →
+    ``COMPLETED``.
+    """
+
+    WELCOME = "WELCOME"
+    SCHOOL_INFO = "SCHOOL_INFO"
+    PROVIDER_KEY = "PROVIDER_KEY"
+    COMPLETED = "COMPLETED"
+
+
 class _CamelModel(BaseModel):
     """Base config: emit/accept camelCase, also accept field names, read from ORM."""
 
@@ -74,6 +90,7 @@ class UserResponse(_CamelModel):
     division: str
     district: str
     school_address: str
+    onboarding_step: OnboardingStep
     created_at: datetime
 
     @field_serializer("id", when_used="json")
@@ -102,3 +119,17 @@ class UpdateProfileInput(_CamelModel):
     division: str | None = None
     district: str | None = None
     school_address: str | None = None
+
+
+class OnboardingStepUpdate(_CamelModel):
+    """Body for ``PATCH /auth/onboarding`` — advance the user's onboarding step.
+
+    Sent by the FE onboarding wizard as the teacher moves through (or completes)
+    the guided setup. Validated against the ``OnboardingStep`` enum.
+
+    Inputs: camelCase JSON body ``{ "step": <OnboardingStep> }``.
+    Outputs: consumed by ``user_service.update_onboarding_step``.
+    Side effects: none at schema level.
+    """
+
+    step: OnboardingStep

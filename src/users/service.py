@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.users.models import User
-from src.users.schemas import RegisterInput, UpdateProfileInput
+from src.users.schemas import OnboardingStep, RegisterInput, UpdateProfileInput
 
 
 async def get_by_firebase_uid(db: AsyncSession, firebase_uid: str) -> User | None:
@@ -56,6 +56,20 @@ async def update_profile(db: AsyncSession, user: User, patch: UpdateProfileInput
     """
     for field, value in patch.model_dump(exclude_none=True).items():
         setattr(user, field, value)
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+async def update_onboarding_step(db: AsyncSession, user: User, step: OnboardingStep) -> User:
+    """Set a user's current onboarding step.
+
+    Inputs: an async session, the persisted ``User``, and the new
+    ``OnboardingStep`` (e.g. the wizard's next step, or ``COMPLETED``).
+    Outputs: the refreshed ``User``.
+    Side effects: updates the row and commits.
+    """
+    user.onboarding_step = step.value
     await db.commit()
     await db.refresh(user)
     return user

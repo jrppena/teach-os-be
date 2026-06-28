@@ -41,9 +41,10 @@ class User(Base):
     division: Mapped[str] = mapped_column(String(100), default="", server_default="")
     district: Mapped[str] = mapped_column(String(100), default="", server_default="")
     school_address: Mapped[str] = mapped_column(String(500), default="", server_default="")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+    # Current step of the guided onboarding wizard; new users start at ``WELCOME``.
+    # Stored as the step name (not a boolean) so onboarding is resumable.
+    onboarding_step: Mapped[str] = mapped_column(
+        String(20), default="WELCOME", server_default="WELCOME"
     )
-    last_login: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
