@@ -1,0 +1,84 @@
+# Production deployment: build the Docker image, push to GHCR, then release on EC2.
+#
+# Flow: push to master (or manual dispatch) -> build the existing Dockerfile and push
+# ghcr.io/<owner>/<repo>:{latest,<sha>} -> SSH to the EC2 instance, sync the compose
+# file, write the production .env from a GitHub secret, run DB migrations, and restart
+# the container. All production config comes from GitHub Secrets (see deploy/README.md).
+name: Deploy to Production
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# Never let two production deploys overlap.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }} # ghcr.io/jrppena/teach-os-be (already lowercase)
+
+jobs:
+  # Build the image from the repo Dockerfile and push it to GitHub Container Registry.
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # lets GITHUB_TOKEN push to GHCR
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile # uses the existing Dockerfile, unchanged
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Release the freshly pushed image onto the EC2 instance over SSH.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      # Keep the server's compose file in sync with the repo on every deploy.
+      - uses: actions/checkout@v4
+
+      - uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: deploy/docker-compose.prod.yml
+          target: /opt/teacher-os-be
+          strip_components: 1 # drop the deploy/ prefix -> /opt/teacher-os-be/docker-compose.prod.yml
+
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /opt/teacher-os-be
+            # Production config: a base64-encoded .env stored as a single GitHub secret.
+            echo "${{ secrets.PROD_ENV_B64 }}" | base64 -d > .env
+            # Authenticate to GHCR to pull the (private) image.
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker compose -f docker-compose.prod.yml pull
+            # Apply migrations in a one-off container before swapping the app over.
+            docker compose -f docker-compose.prod.yml run --rm api alembic upgrade head
+            docker compose -f docker-compose.prod.yml up -d
+            docker image prune -f

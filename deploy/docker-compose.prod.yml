@@ -1,0 +1,27 @@
+# Production runtime for the EC2 instance.
+#
+# Pulls the image built by .github/workflows/production.yaml from GHCR, loads the
+# production .env (written on each deploy from the PROD_ENV_B64 secret), and binds the
+# app to localhost only so the host Nginx reverse proxy is the sole public entry point.
+#
+# The deploy workflow references this file by name: `docker compose -f docker-compose.prod.yml ...`.
+# The service MUST stay named `api` (the workflow runs `... run --rm api alembic upgrade head`).
+services:
+  api:
+    image: ghcr.io/jrppena/teach-os-be:latest
+    restart: always
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000" # only the host Nginx reaches the container
+    healthcheck:
+      # python is always present in the slim image; curl is not.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/health').status==200 else sys.exit(1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
